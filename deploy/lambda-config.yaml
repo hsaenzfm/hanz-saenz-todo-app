@@ -1,0 +1,302 @@
+# AWS Lambda deployment configuration for todo read service
+# This configuration can be used with AWS SAM, Serverless Framework, or CDK
+
+# SAM Template equivalent (template.yaml)
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'Todo Read Service - List todos with pagination, filtering, and sorting'
+
+Globals:
+  Function:
+    Runtime: python3.11
+    Timeout: 30
+    MemorySize: 512
+    Environment:
+      Variables:
+        POWERTOOLS_SERVICE_NAME: todo-read
+        POWERTOOLS_LOG_LEVEL: INFO
+        POWERTOOLS_METRICS_NAMESPACE: TodoApp
+        POWERTOOLS_LOGGER_SAMPLE_RATE: 0.01
+        POWERTOOLS_TRACE_CAPTURE_RESPONSE: true
+        POWERTOOLS_TRACE_CAPTURE_ERROR: true
+
+Parameters:
+  Stage:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+    Description: Deployment stage
+  
+  DatabaseHost:
+    Type: String
+    Description: PostgreSQL database host
+    
+  DatabaseName:
+    Type: String
+    Default: todoapp
+    Description: PostgreSQL database name
+    
+  DatabaseUser:
+    Type: String
+    Description: PostgreSQL database username
+    
+  DatabasePasswordArn:
+    Type: String
+    Description: ARN of the secret containing database password
+
+Resources:
+  # Lambda Function
+  TodoReadFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'todo-read-${Stage}'
+      Description: 'List todos with pagination, filtering, and sorting'
+      Handler: todo.read.src.entrypoints.api.lambda_handler
+      CodeUri: .
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          STAGE: !Ref Stage
+          DB_HOST: !Ref DatabaseHost
+          DB_NAME: !Ref DatabaseName
+          DB_USER: !Ref DatabaseUser
+          DB_PASSWORD: !Sub '{{resolve:secretsmanager:${DatabasePasswordArn}:SecretString:password}}'
+          DB_PORT: 5432
+          DB_SSL_MODE: require
+          DB_CONNECT_TIMEOUT: 30
+      Events:
+        ListTodosApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TodoReadApi
+            Path: /todos
+            Method: get
+      Policies:
+        - AWSXRayDaemonWriteAccess
+        - CloudWatchLambdaInsightsExecutionRolePolicy
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Ref DatabasePasswordArn
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/todo-read-${Stage}:*'
+      Tags:
+        Service: todo-read
+        Stage: !Ref Stage
+        Feature: list-todos
+
+  # API Gateway
+  TodoReadApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub 'todo-read-api-${Stage}'
+      StageName: !Ref Stage
+      Description: 'API for listing todos'
+      Cors:
+        AllowMethods: "'GET, OPTIONS'"
+        AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+        AllowOrigin: "'*'"
+        MaxAge: "'600'"
+      TracingEnabled: true
+      MethodSettings:
+        - ResourcePath: '/*'
+          HttpMethod: '*'
+          LoggingLevel: INFO
+          DataTraceEnabled: true
+          MetricsEnabled: true
+      AccessLogSetting:
+        DestinationArn: !GetAtt ApiGatewayLogGroup.Arn
+        Format: >
+          {
+            "requestId": "$context.requestId",
+            "ip": "$context.identity.sourceIp",
+            "requestTime": "$context.requestTime",
+            "httpMethod": "$context.httpMethod",
+            "routeKey": "$context.routeKey",
+            "status": "$context.status",
+            "protocol": "$context.protocol",
+            "responseLength": "$context.responseLength",
+            "responseLatency": "$context.responseLatency",
+            "integrationLatency": "$context.integrationLatency",
+            "integrationStatus": "$context.integrationStatus",
+            "errorMessage": "$context.error.message",
+            "errorType": "$context.error.messageString"
+          }
+
+  # CloudWatch Log Group for API Gateway
+  ApiGatewayLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/apigateway/todo-read-api-${Stage}'
+      RetentionInDays: 14
+
+  # CloudWatch Log Group for Lambda
+  LambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/todo-read-${Stage}'
+      RetentionInDays: 14
+
+  # CloudWatch Dashboard
+  TodoReadDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub 'TodoRead-${Stage}'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/Lambda", "Duration", "FunctionName", "todo-read-${Stage}" ],
+                  [ "AWS/Lambda", "Invocations", "FunctionName", "todo-read-${Stage}" ],
+                  [ "AWS/Lambda", "Errors", "FunctionName", "todo-read-${Stage}" ]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "${AWS::Region}",
+                "title": "Lambda Metrics"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/ApiGateway", "Count", "ApiName", "todo-read-api-${Stage}", "Stage", "${Stage}" ],
+                  [ "AWS/ApiGateway", "Latency", "ApiName", "todo-read-api-${Stage}", "Stage", "${Stage}" ],
+                  [ "AWS/ApiGateway", "4XXError", "ApiName", "todo-read-api-${Stage}", "Stage", "${Stage}" ],
+                  [ "AWS/ApiGateway", "5XXError", "ApiName", "todo-read-api-${Stage}", "Stage", "${Stage}" ]
+                ],
+                "period": 300,
+                "stat": "Sum",
+                "region": "${AWS::Region}",
+                "title": "API Gateway Metrics"
+              }
+            }
+          ]
+        }
+
+Outputs:
+  TodoReadApiUrl:
+    Description: 'API Gateway endpoint URL for todo read service'
+    Value: !Sub 'https://${TodoReadApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}'
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiUrl'
+
+  TodoReadFunctionArn:
+    Description: 'Todo Read Lambda Function ARN'
+    Value: !GetAtt TodoReadFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-FunctionArn'
+
+  TodoReadFunctionName:
+    Description: 'Todo Read Lambda Function Name'
+    Value: !Ref TodoReadFunction
+    Export:
+      Name: !Sub '${AWS::StackName}-FunctionName'
+
+---
+# Additional deployment configurations
+
+# Environment-specific configurations
+environments:
+  dev:
+    memory_size: 512
+    timeout: 30
+    log_level: DEBUG
+    log_retention_days: 7
+    tracing: true
+    
+  staging:
+    memory_size: 512
+    timeout: 30
+    log_level: INFO
+    log_retention_days: 14
+    tracing: true
+    
+  prod:
+    memory_size: 1024
+    timeout: 30
+    log_level: WARN
+    log_retention_days: 30
+    tracing: true
+    reserved_concurrency: 100
+
+# Performance and scaling configuration
+performance:
+  reserved_concurrency:
+    dev: null      # No reserved concurrency for dev
+    staging: 50    # Limited concurrency for staging
+    prod: 100      # Reserved concurrency for production
+    
+  provisioned_concurrency:
+    dev: 0         # No warm instances for dev
+    staging: 2     # Keep 2 instances warm for staging
+    prod: 5        # Keep 5 instances warm for production
+
+# Security configuration  
+security:
+  vpc_config:
+    enabled: false  # Set to true if Lambda needs VPC access
+    subnet_ids: []
+    security_group_ids: []
+    
+  environment_variables:
+    encrypted: true
+    kms_key_arn: null  # Use default AWS managed key
+    
+  iam_permissions:
+    - secretsmanager:GetSecretValue
+    - logs:CreateLogGroup
+    - logs:CreateLogStream
+    - logs:PutLogEvents
+    - xray:PutTraceSegments
+    - xray:PutTelemetryRecords
+
+# Monitoring and alerting
+monitoring:
+  cloudwatch_alarms:
+    error_rate:
+      threshold: 5        # % error rate threshold
+      evaluation_periods: 2
+      period: 300
+      
+    duration:
+      threshold: 10000    # 10 second duration threshold (well above 1s requirement)
+      evaluation_periods: 3
+      period: 300
+      
+    throttles:
+      threshold: 1        # Any throttle is concerning
+      evaluation_periods: 1
+      period: 300
+
+# Deployment configuration
+deployment:
+  package_type: Zip
+  architectures: [x86_64]
+  
+  dead_letter_queue:
+    enabled: false  # Not needed for synchronous API calls
+    
+  layers:
+    - arn:aws:lambda:us-east-1:017000801446:layer:AWSLambdaPowertoolsPythonV2:68
+    
+  deployment_preference:
+    type: AllAtOnce  # For dev/staging. Use Canary10Percent5Minutes for prod

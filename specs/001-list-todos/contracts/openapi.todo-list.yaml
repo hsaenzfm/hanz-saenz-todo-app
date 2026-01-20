@@ -1,0 +1,318 @@
+openapi: 3.0.3
+info:
+  title: Todo List API
+  description: API for listing todos with pagination, filtering, and sorting
+  version: 1.0.0
+
+paths:
+  /todos:
+    get:
+      summary: List todos
+      description: |
+        Retrieve a paginated, filtered, and sorted list of todos.
+        
+        Supports:
+        - Pagination via `page` and `limit` query parameters
+        - Filtering by status via `status` query parameter
+        - Sorting by creation date or due date via `sort` and `order` query parameters
+        
+        Default behavior:
+        - Page 1, limit 20 items
+        - Sorted by created_at descending (newest first)
+        - All statuses included
+      operationId: listTodos
+      tags:
+        - todos
+      parameters:
+        - name: page
+          in: query
+          description: Page number (1-based). Default is 1.
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          example: 1
+        
+        - name: limit
+          in: query
+          description: Number of items per page. Default is 20. Maximum is 100.
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          example: 20
+        
+        - name: status
+          in: query
+          description: Filter todos by completion status
+          required: false
+          schema:
+            type: string
+            enum:
+              - pending
+              - completed
+          example: pending
+        
+        - name: sort
+          in: query
+          description: Field to sort by. Default is 'created_at'.
+          required: false
+          schema:
+            type: string
+            enum:
+              - created_at
+              - due_date
+            default: created_at
+          example: created_at
+        
+        - name: order
+          in: query
+          description: Sort order. Default is 'desc'.
+          required: false
+          schema:
+            type: string
+            enum:
+              - asc
+              - desc
+            default: desc
+          example: desc
+      
+      responses:
+        '200':
+          description: Successfully retrieved todos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListTodosResponse'
+              examples:
+                success_with_data:
+                  summary: Success with todos
+                  value:
+                    data:
+                      - id: "123e4567-e89b-12d3-a456-426614174000"
+                        title: "Complete project documentation"
+                        description: "Write API documentation"
+                        status: "pending"
+                        created_at: "2026-01-20T10:00:00Z"
+                        updated_at: "2026-01-20T10:00:00Z"
+                        due_date: "2026-01-25"
+                    pagination:
+                      page: 1
+                      limit: 20
+                      total: 45
+                      totalPages: 3
+                
+                success_empty:
+                  summary: Success with empty results
+                  value:
+                    data: []
+                    pagination:
+                      page: 5
+                      limit: 20
+                      total: 45
+                      totalPages: 3
+        
+        '400':
+          description: Bad request - invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalid_page:
+                  summary: Invalid page number
+                  value:
+                    error:
+                      code: "INVALID_PARAMETER"
+                      message: "Invalid parameter: page must be >= 1"
+                      field: "page"
+                
+                invalid_limit:
+                  summary: Invalid limit
+                  value:
+                    error:
+                      code: "INVALID_PARAMETER"
+                      message: "Invalid parameter: limit must be between 1 and 100"
+                      field: "limit"
+                
+                invalid_status:
+                  summary: Invalid status value
+                  value:
+                    error:
+                      code: "INVALID_PARAMETER"
+                      message: "Invalid parameter: status must be one of [pending, completed]"
+                      field: "status"
+                
+                invalid_sort:
+                  summary: Invalid sort field
+                  value:
+                    error:
+                      code: "INVALID_PARAMETER"
+                      message: "Invalid parameter: sort must be one of [created_at, due_date]"
+                      field: "sort"
+                
+                invalid_order:
+                  summary: Invalid sort order
+                  value:
+                    error:
+                      code: "INVALID_PARAMETER"
+                      message: "Invalid parameter: order must be one of [asc, desc]"
+                      field: "order"
+        
+        '401':
+          description: Unauthorized - authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: "UNAUTHORIZED"
+                  message: "Authentication required"
+        
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: "INTERNAL_ERROR"
+                  message: "An unexpected error occurred"
+
+components:
+  schemas:
+    Todo:
+      type: object
+      description: A todo item
+      required:
+        - id
+        - title
+        - status
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique identifier for the todo
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        
+        title:
+          type: string
+          maxLength: 255
+          description: Todo title
+          example: "Complete project documentation"
+        
+        description:
+          type: string
+          nullable: true
+          description: Optional todo description
+          example: "Write API documentation"
+        
+        status:
+          type: string
+          enum:
+            - pending
+            - completed
+          description: Completion status
+          example: "pending"
+        
+        created_at:
+          type: string
+          format: date-time
+          description: Creation timestamp
+          example: "2026-01-20T10:00:00Z"
+        
+        updated_at:
+          type: string
+          format: date-time
+          description: Last update timestamp
+          example: "2026-01-20T10:00:00Z"
+        
+        due_date:
+          type: string
+          format: date
+          nullable: true
+          description: Optional due date
+          example: "2026-01-25"
+    
+    PaginationMetadata:
+      type: object
+      description: Pagination metadata
+      required:
+        - page
+        - limit
+        - total
+        - totalPages
+      properties:
+        page:
+          type: integer
+          minimum: 1
+          description: Current page number (1-based)
+          example: 1
+        
+        limit:
+          type: integer
+          minimum: 1
+          description: Number of items per page
+          example: 20
+        
+        total:
+          type: integer
+          minimum: 0
+          description: Total count of items matching filters
+          example: 45
+        
+        totalPages:
+          type: integer
+          minimum: 0
+          description: Total number of pages
+          example: 3
+    
+    ListTodosResponse:
+      type: object
+      description: Response for list todos endpoint
+      required:
+        - data
+        - pagination
+      properties:
+        data:
+          type: array
+          description: Array of todo items
+          items:
+            $ref: '#/components/schemas/Todo'
+        
+        pagination:
+          $ref: '#/components/schemas/PaginationMetadata'
+    
+    ErrorResponse:
+      type: object
+      description: Standard error response format
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              description: Error code
+              example: "INVALID_PARAMETER"
+            
+            message:
+              type: string
+              description: Human-readable error message
+              example: "Invalid parameter: page must be >= 1"
+            
+            field:
+              type: string
+              description: Field name that caused the error (optional)
+              example: "page"
